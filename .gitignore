@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# ROS / colcon
+build/
+install/
+log/
+
+# VS Code
+.vscode/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Archivos temporales
+*.tmp
+*.swp
+
+# Rosbags
+rosbag2_*/
+*.db3
+*.mcap
+
+# Docker / caches
+*.log
+
+# Virtual Environment
+venv/
