@@ -4,14 +4,81 @@ from dijkstra import get_neighborhood, get_edge_cost
 # Implemente la misma heuristica que en A* (distancia euclídea) para que Theta* pueda guiar la búsqueda de manera más eficiente.
 def get_heuristic(cell, goal):
     # (Ejercicio 2.3.2)
-    heuristic = 0
+    
+    dx = goal[0] - cell[0]
+    dy = goal[1] - cell[1]
+
+    heuristic = np.sqrt(dx**2 + dy**2)
+
     return heuristic
 
 def update_costs_and_predecessors(parent, occ_map, costs, predecessors, closed_flags):
+    
+    # parent llega como un array de NumPy.
+    parent = tuple(parent)
+
     for neighbor in get_neighborhood(parent, occ_map.shape):
+
         x, y = neighbor
+
         if closed_flags[x, y] == 1:
             continue
+
+        # -------------------------------------------------------------
+        # Caso normal: parent -> neighbor
+        # -------------------------------------------------------------
+
+        normal_cost = (
+            costs[parent]
+            + get_edge_cost(parent, neighbor, occ_map)
+        )
+
+        best_cost = normal_cost
+        best_predecessor = parent
+
+        # -------------------------------------------------------------
+        # Caso Theta*: predecessor(parent) -> neighbor
+        # -------------------------------------------------------------
+
+        grandparent = predecessors[parent]
+
+        # Verificamos que parent tenga un predecesor válido.
+        if grandparent[0] != -1:
+
+            grandparent = tuple(grandparent)
+
+            # Si existe línea de visión directa entre el abuelo
+            # y el vecino, evaluamos ese camino alternativo.
+            if bresenham_line_of_sight(
+                grandparent,
+                neighbor,
+                occ_map
+            ):
+
+                # Como grandparent y neighbor pueden no ser vecinos,
+                # calculamos directamente la distancia euclídea.
+                dx = neighbor[0] - grandparent[0]
+                dy = neighbor[1] - grandparent[1]
+
+                direct_distance = np.sqrt(dx**2 + dy**2)
+
+                # Se mantiene también la penalización por ocupación
+                # utilizada en el costo de Dijkstra/A*.
+                direct_cost = (
+                    costs[grandparent]
+                    + direct_distance
+                    + occ_map[neighbor]
+                )
+
+                # Si el salto angular es más barato, lo elegimos.
+                if direct_cost < best_cost:
+                    best_cost = direct_cost
+                    best_predecessor = grandparent
+
+        # Actualizamos solamente si mejoramos el costo conocido.
+        if best_cost < costs[neighbor]:
+            costs[neighbor] = best_cost
+            predecessors[neighbor] = best_predecessor
 
 
         # (Ejercicio 2.4.1)

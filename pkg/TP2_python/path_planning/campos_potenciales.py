@@ -10,7 +10,23 @@ def get_attractive_force(cell, goal, k_att=1.0):
     # La meta es goal [y, x] y la celda actual es cell [y, x]
     # La fuerza deben calcularla como un vector que apunta desde la celda actual hacia la meta,
     # normalizado y escalado por la magnitud de la fuerza.
-    f_att = np.zeros(2)
+
+    # Vector que apunta desde la celda actual hacia la meta.
+    direction = np.array(goal, dtype=float) - np.array(cell, dtype=float)
+
+    # Distancia entre la celda actual y la meta.
+    distance = np.linalg.norm(direction)
+
+    # Si ya estamos en la meta, no hay fuerza atractiva.
+    if distance == 0:
+        return np.zeros(2)
+
+    # Modelo lineal: la magnitud de la fuerza aumenta con la distancia a la meta.
+    magnitude = k_att * distance
+
+    # Normalizamos la dirección y la escalamos por la magnitud.
+    f_att = (direction / distance) * magnitude
+
     return f_att
 
 def get_repulsive_force(cell, occ_map, k_rep=100.0, d_0=5.0):
@@ -22,7 +38,45 @@ def get_repulsive_force(cell, occ_map, k_rep=100.0, d_0=5.0):
     # La fuerza deben calcularla como un vector que apunta desde el obstáculo hacia la celda
     # actual, normalizado y escalado por la magnitud de la fuerza.
 
-    f_rep = np.zeros(2)
+    # Consideramos obstáculos las celdas cuya probabilidad de ocupación sea mayor o igual a 0.4.
+    obstacles = np.argwhere(occ_map >= 0.4)
+
+    # Si no hay obstáculos, no existe fuerza repulsiva.
+    if len(obstacles) == 0:
+        return np.zeros(2)
+
+    cell = np.array(cell, dtype=float)
+
+    # Calculamos el vector desde cada obstáculo hacia la posición actual.
+    vectors = cell - obstacles
+
+    # Calculamos la distancia desde la celda actual a cada obstáculo.
+    distances = np.linalg.norm(vectors, axis=1)
+
+    # Buscamos el obstáculo más cercano.
+    closest_index = np.argmin(distances)
+    distance = distances[closest_index]
+
+    # La fuerza repulsiva solamente actúa dentro de la distancia de influencia d_0.
+    if distance >= d_0:
+        return np.zeros(2)
+
+    # Evitamos una división por cero si la posición coincide exactamente con un obstáculo.
+    if distance == 0:
+        distance = 1e-6
+
+    # Dirección desde el obstáculo más cercano hacia la posición actual.
+    direction = vectors[closest_index] / distance
+
+    # Magnitud de la fuerza repulsiva.
+    magnitude = (
+        k_rep
+        * (1 / distance - 1 / d_0)
+        / distance**2
+    )
+
+    f_rep = direction * magnitude
+
     return f_rep
 
 
