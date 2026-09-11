@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import heapq
+import math
+
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
@@ -100,7 +103,145 @@ class PathPlanner(Node):
 
         # [COMPLETAR] Implementar algún algoritmo de planificación de caminos
         # Debe devolver una lista de tuplas (x, y) en coordenadas de mapa, o None si no se encuentra un camino
-        path = [(0,0), (1,0), (1,1), (2,1), (2,2)]  # Ejemplo de camino ficticio
+        
+        width = self.map.info.width
+        height = self.map.info.height
+
+
+        def is_free(cell):
+            """
+            Devuelve True si una celda está dentro del mapa y se considera libre.
+            En OccupancyGrid, los valores van de 0 a 100 y -1 representa
+            una celda desconocida.
+            """
+            x, y = cell
+
+            if not (0 <= x < width and 0 <= y < height):
+                return False
+
+            index = y * width + x
+            occupancy = self.map.data[index]
+
+            # Consideramos transitables únicamente las celdas conocidas
+            # cuya ocupación es menor al 50 %.
+            return 0 <= occupancy < 50
+
+
+        def get_neighbors(cell):
+            """
+            Devuelve los vecinos libres usando conectividad de 8 vecinos.
+            """
+            x, y = cell
+            neighbors = []
+
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+
+                    if dx == 0 and dy == 0:
+                        continue
+
+                    neighbor = (x + dx, y + dy)
+
+                    if not is_free(neighbor):
+                        continue
+
+                    # Si el movimiento es diagonal, evitamos atravesar
+                    # la esquina de dos obstáculos.
+                    if dx != 0 and dy != 0:
+                        if not is_free((x + dx, y)):
+                            continue
+                        if not is_free((x, y + dy)):
+                            continue
+
+                    neighbors.append(neighbor)
+
+            return neighbors
+
+
+        # Antes de planificar verificamos que inicio y objetivo sean transitables.
+        if not is_free(start):
+            self.get_logger().warn('La posición inicial no está en una celda libre.')
+            return
+
+        if not is_free(goal):
+            self.get_logger().warn('El objetivo no está en una celda libre.')
+            return
+
+
+        # Cola de prioridad de A*.
+        # Cada elemento contiene:
+        # (costo_estimado_total, celda)
+        open_set = []
+
+        heapq.heappush(open_set, (0.0, start))
+
+        # Costo acumulado desde el inicio hasta cada celda.
+        g_cost = {start: 0.0}
+
+        # Predecesor de cada celda, utilizado luego para reconstruir el camino.
+        predecessor = {}
+
+        # Celdas que ya fueron completamente expandidas.
+        closed = set()
+
+        path = None
+
+
+        while open_set:
+
+            _, current = heapq.heappop(open_set)
+
+            # Una misma celda puede aparecer más de una vez en la cola.
+            # Si ya fue expandida, la ignoramos.
+            if current in closed:
+                continue
+
+            # Si llegamos al objetivo, reconstruimos el camino.
+            if current == goal:
+
+                path = [current]
+
+                while current != start:
+                    current = predecessor[current]
+                    path.append(current)
+
+                path.reverse()
+                break
+
+            closed.add(current)
+
+            for neighbor in get_neighbors(current):
+
+                dx = neighbor[0] - current[0]
+                dy = neighbor[1] - current[1]
+
+                # Movimiento horizontal/vertical: costo 1.
+                # Movimiento diagonal: costo sqrt(2).
+                movement_cost = math.sqrt(dx**2 + dy**2)
+
+                new_cost = g_cost[current] + movement_cost
+
+                # Si encontramos una forma más barata de llegar al vecino,
+                # actualizamos su costo y su predecesor.
+                if (
+                    neighbor not in g_cost
+                    or new_cost < g_cost[neighbor]
+                ):
+                    g_cost[neighbor] = new_cost
+                    predecessor[neighbor] = current
+
+                    # Heurística euclídea hasta el objetivo.
+                    heuristic = math.sqrt(
+                        (goal[0] - neighbor[0])**2
+                        + (goal[1] - neighbor[1])**2
+                    )
+
+                    total_cost = new_cost + heuristic
+
+                    heapq.heappush(
+                        open_set,
+                        (total_cost, neighbor)
+                    )
 
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
         #  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
