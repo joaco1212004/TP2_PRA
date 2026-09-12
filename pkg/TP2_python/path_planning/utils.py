@@ -201,14 +201,24 @@ def run_planning(occ_map, start, goal, get_heuritic, update_costs):
     
     # Reconstrucción del camino
     if np.array_equal(parent, goal):
+
         current = np.array(goal)
+
+        # Variable temporal para medir la longitud geométrica del camino
+        path_length = 0.0
+
         while not np.array_equal(current, start):
+
             previous = predecessors[current[0], current[1]]
+
             # No debería ocurrir si encontramos un camino válido,
             # pero evita errores si el predecesor no existe.
             if previous[0] == -1:
                 print("Error reconstruyendo el camino.")
                 break
+
+            # Sumamos la distancia real entre dos puntos consecutivos del camino
+            path_length += np.linalg.norm(current - previous)
 
             if not viz.plot_path(current, previous):
                 print("Visualización cerrada.")
@@ -217,6 +227,8 @@ def run_planning(occ_map, start, goal, get_heuritic, update_costs):
             current = previous
 
         print(f"Camino encontrado. Costo: {costs[goal[0], goal[1]]:.2f}")
+        print(f"Longitud real del camino: {path_length:.2f}")
+
     else:
         print("No se encontró un camino válido.")
 

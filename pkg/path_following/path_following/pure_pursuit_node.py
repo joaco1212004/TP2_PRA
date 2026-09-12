@@ -1,72 +1,249 @@
 import math
+
 import rclpy
 from rclpy.node import Node
+
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Path, Odometry
 from visualization_msgs.msg import Marker
 
+
 def get_yaw_from_quaternion(q):
     """Extrae el ángulo yaw (rotación Z) a partir del cuaternión."""
+
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
     cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+
     return math.atan2(siny_cosp, cosy_cosp)
 
+
 class PurePursuitNode(Node):
+
     def __init__(self):
         super().__init__('pure_pursuit_node')
 
-        # Parámetros del algoritmo
-        self.lookahead_distance = 0.0  # [IMPLEMENTAR] Distancia de avance (m)
-        self.target_speed = 0.0        # [IMPLEMENTAR] Velocidad lineal deseada (m/s)
-        self.goal_tolerance = 0.0      # [IMPLEMENTAR] Radio de parada respecto a la meta (m)
+        # Parámetros del algoritmo.
+        # Más adelante se probarán distintos valores como pide la consigna.
+
+        # # Distancia de lookahead [m]
+        # Velocidad lineal deseada [m/s]
+        # Distancia aceptada a la meta [m]
+
+        self.lookahead_distance = 0.30
+        self.target_speed = 0.08
+        self.goal_tolerance = 0.25
 
         # Variables de estado
         self.current_path = None
         self.current_pose = None
         self.path_frame_id = 'map'
-        self.last_closest_idx = 0      # Índice para evitar retrocesos en la ruta
 
-        # Suscriptores y Publicadores
-        self.create_subscription(Path, '/plan', self.path_callback, 10)
-        self.create_subscription(Odometry, '/calc_odom', self.odom_callback, 10)
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        self.marker_pub = self.create_publisher(Marker, '/lookahead_marker', 10)
+        # Índice para evitar volver hacia atrás sobre el camino
+        self.last_closest_idx = 0
+
+        # Suscriptores y publicadores
+        self.create_subscription(
+            Path,
+            '/plan',
+            self.path_callback,
+            10
+        )
+
+        self.create_subscription(
+            Odometry,
+            '/calc_odom',
+            self.odom_callback,
+            10
+        )
+
+        self.cmd_pub = self.create_publisher(
+            Twist,
+            '/cmd_vel',
+            10
+        )
+
+        self.marker_pub = self.create_publisher(
+            Marker,
+            '/lookahead_marker',
+            10
+        )
 
         # Bucle de control a 20 Hz
-        self.timer = self.create_timer(0.05, self.control_loop)
+        self.timer = self.create_timer(
+            0.05,
+            self.control_loop
+        )
 
     def path_callback(self, msg):
         self.current_path = msg.poses
-        self.last_closest_idx = 0  # Reiniciar índice al recibir una nueva ruta
+
+        # Al recibir un nuevo camino empezamos nuevamente
+        # a buscar desde el principio.
+        self.last_closest_idx = 0
+
         if msg.header.frame_id:
             self.path_frame_id = msg.header.frame_id
 
     def odom_callback(self, msg):
         self.current_pose = msg.pose.pose
 
+    def get_lookahead_point(self, x, y):
+        """
+        Busca primero el punto de la trayectoria más cercano al robot.
+        Luego avanza sobre el camino hasta encontrar un punto cuya
+        distancia al robot sea mayor o igual al lookahead.
+        """
+
+        # -------------------------------------------------------------
+        # 1. Buscar el punto del path más cercano al robot.
+        # -------------------------------------------------------------
+        closest_idx = self.last_closest_idx
+        closest_distance = float('inf')
+
+        for i in range(self.last_closest_idx, len(self.current_path)):
+            point = self.current_path[i].pose.position
+
+            distance = math.hypot(
+                point.x - x,
+                point.y - y
+            )
+
+            if distance < closest_distance:
+                closest_distance = distance
+                closest_idx = i
+
+        # Guardamos el índice para evitar retroceder en la trayectoria.
+        self.last_closest_idx = closest_idx
+
+        # -------------------------------------------------------------
+        # 2. Desde el punto más cercano, buscar el primer punto
+        # que se encuentre al menos a lookahead_distance del robot.
+        # -------------------------------------------------------------
+        for i in range(closest_idx, len(self.current_path)):
+            point = self.current_path[i].pose.position
+
+            distance = math.hypot(
+                point.x - x,
+                point.y - y
+            )
+
+            if distance >= self.lookahead_distance:
+                return point
+
+        # Si estamos cerca del final y ningún punto cumple la distancia
+        # de lookahead, usamos directamente la meta.
+        return self.current_path[-1].pose.position
+
     def control_loop(self):
+
+        # No podemos controlar hasta tener path y odometría.
         if not self.current_path or self.current_pose is None:
             return
 
-        # [IMPLEMENTAR] Algoritmo de path following Pure Pursuit
+        # Pose actual del robot.
+        x = self.current_pose.position.x
+        y = self.current_pose.position.y
 
-        #### Ejemplo de publicación de lookahead marker
-        # target_point = self.get_lookahead_point(x, y)
-        # self.publish_lookahead_marker(target_point)
+        yaw = get_yaw_from_quaternion(
+            self.current_pose.orientation
+        )
 
+        # -------------------------------------------------------------
+        # Verificar si llegamos a la meta.
+        # -------------------------------------------------------------
+        goal = self.current_path[-1].pose.position
 
-        #### Ejemplo de publicación de comando de velocidad
-        # cmd = Twist()
-        # cmd.linear.x = self.target_speed
-        # cmd.angular.z = angular_velocity
-        # self.cmd_pub.publish(cmd)
+        distance_to_goal = math.hypot(
+            goal.x - x,
+            goal.y - y
+        )
+
+        if distance_to_goal <= self.goal_tolerance:
+            # Publicamos velocidad cero para detener el robot.
+            cmd = Twist()
+            self.cmd_pub.publish(cmd)
+            return
+
+        # -------------------------------------------------------------
+        # Buscar el punto de lookahead.
+        # -------------------------------------------------------------
+        target_point = self.get_lookahead_point(x, y)
+
+        # Mostrar el punto de lookahead en RViz.
+        self.publish_lookahead_marker(target_point)
+
+        # Vector desde el robot hasta el punto objetivo,
+        # expresado inicialmente en coordenadas globales.
+        dx = target_point.x - x
+        dy = target_point.y - y
+
+        # -------------------------------------------------------------
+        # Transformar el punto al sistema local del robot.
+        #
+        # Convención ROS:
+        #   x_local -> hacia adelante
+        #   y_local -> hacia la izquierda
+        # -------------------------------------------------------------
+        local_x = (
+            math.cos(yaw) * dx
+            + math.sin(yaw) * dy
+        )
+
+        local_y = (
+            -math.sin(yaw) * dx
+            + math.cos(yaw) * dy
+        )
+
+        # Distancia al cuadrado hasta el punto de lookahead.
+        lookahead_squared = (
+            local_x ** 2
+            + local_y ** 2
+        )
+
+        if lookahead_squared == 0.0:
+            return
+
+        # -------------------------------------------------------------
+        # Pure Pursuit:
+        #
+        # gamma = 2 * y_local / L^2
+        #
+        # gamma representa la curvatura necesaria para alcanzar
+        # el punto de lookahead.
+        # -------------------------------------------------------------
+        curvature = (
+            2.0 * local_y
+            / lookahead_squared
+        )
+
+        # Para un robot diferencial:
+        #
+        # omega = v * gamma
+        angular_velocity = (
+            self.target_speed
+            * curvature
+        )
+
+        # -------------------------------------------------------------
+        # Publicar velocidades.
+        # -------------------------------------------------------------
+        cmd = Twist()
+
+        cmd.linear.x = self.target_speed
+        cmd.angular.z = angular_velocity
+
+        self.cmd_pub.publish(cmd)
 
     def publish_lookahead_marker(self, target_point):
+
         marker = Marker()
+
         marker.header.frame_id = self.path_frame_id
         marker.header.stamp = self.get_clock().now().to_msg()
+
         marker.ns = "lookahead_point"
         marker.id = 0
+
         marker.type = Marker.SPHERE
         marker.action = Marker.ADD
 
@@ -90,11 +267,17 @@ class PurePursuitNode(Node):
 
 
 def main(args=None):
+
     rclpy.init(args=args)
+
     node = PurePursuitNode()
+
     rclpy.spin(node)
+
     node.destroy_node()
+
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
